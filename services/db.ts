@@ -1,0 +1,431 @@
+import { CommercialRecord, DuplicateRequest, User, Role, CommercialType, CITIES as DEFAULT_CITIES } from '../types';
+
+const DB_NAME = 'MinutesMasterDB';
+const DB_VERSION = 1;
+
+// Store Names
+const STORE_RECORDS = 'records';
+const STORE_REQUESTS = 'requests';
+const STORE_BIN = 'bin';
+const STORE_USERS = 'users';
+const STORE_CONFIG = 'config';
+
+const STORAGE_KEYS_LEGACY = {
+  USERS: 'mm_users',
+  RECORDS: 'mm_records',
+  REQUESTS: 'mm_requests',
+  BIN: 'mm_bin',
+  CITIES: 'mm_cities'
+};
+
+// Seed Data
+const SEED_USERS: User[] = [
+  { id: '1', employeeId: 'maker1', name: 'Maker', role: Role.MAKER },
+  { id: '2', employeeId: 'checker1', name: 'Checker', role: Role.CHECKER, pin: '1234' },
+  { id: '3', employeeId: 'admin1', name: 'Admin', role: Role.ADMIN, pin: '9999' },
+];
+
+type RecordListener = (records: CommercialRecord[]) => void;
+
+class DBService {
+  private dbPromise: Promise<IDBDatabase> | null = null;
+  private listeners: RecordListener[] = [];
+
+  constructor() {
+    this.init();
+  }
+
+  // --- IndexedDB Core Wrappers ---
+
+  private async getDB(): Promise<IDBDatabase> {
+    if (this.dbPromise) return this.dbPromise;
+
+    this.dbPromise = new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        
+        if (!db.objectStoreNames.contains(STORE_RECORDS)) {
+          db.createObjectStore(STORE_RECORDS, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORE_REQUESTS)) {
+          db.createObjectStore(STORE_REQUESTS, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORE_BIN)) {
+          // Bin needs to allow multiple deleted versions, so we use autoIncrement
+          db.createObjectStore(STORE_BIN, { keyPath: 'binId', autoIncrement: true });
+        }
+        if (!db.objectStoreNames.contains(STORE_USERS)) {
+          db.createObjectStore(STORE_USERS, { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains(STORE_CONFIG)) {
+          db.createObjectStore(STORE_CONFIG, { keyPath: 'key' });
+        }
+      };
+
+      request.onsuccess = (event) => {
+        resolve((event.target as IDBOpenDBRequest).result);
+      };
+
+      request.onerror = (event) => {
+        console.error("IDB Open Error:", (event.target as IDBOpenDBRequest).error);
+        reject((event.target as IDBOpenDBRequest).error);
+      };
+    });
+
+    return this.dbPromise;
+  }
+
+  private async transaction<T>(
+    storeNames: string | string[], 
+    mode: IDBTransactionMode, 
+    callback: (store: IDBObjectStore) => IDBRequest<T> | void
+  ): Promise<T> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeNames, mode);
+      const store = tx.objectStore(Array.isArray(storeNames) ? storeNames[0] : storeNames);
+      
+      let req: IDBRequest | void;
+      try {
+        req = callback(store);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+
+      tx.oncomplete = () => {
+        resolve(req ? req.result : undefined);
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  private async getAll<T>(storeName: string): Promise<T[]> {
+    return this.transaction(storeName, 'readonly', (store) => store.getAll());
+  }
+
+  private async get<T>(storeName: string, key: string): Promise<T | undefined> {
+    return this.transaction(storeName, 'readonly', (store) => store.get(key));
+  }
+
+  private async put(storeName: string, value: any): Promise<void> {
+    await this.transaction(storeName, 'readwrite', (store) => store.put(value));
+  }
+
+  private async bulkPut(storeName: string, values: any[]): Promise<void> {
+    const db = await this.getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      
+      values.forEach(v => store.put(v));
+      
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  private async delete(storeName: string, key: string | number): Promise<void> {
+    await this.transaction(storeName, 'readwrite', (store) => store.delete(key));
+  }
+
+  private async bulkDelete(storeName: string, keys: string[]): Promise<void> {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readwrite');
+        const store = tx.objectStore(storeName);
+        keys.forEach(k => store.delete(k));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+  }
+
+  private async clear(storeName: string): Promise<void> {
+    await this.transaction(storeName, 'readwrite', (store) => store.clear());
+  }
+
+  // --- Initialization & Migration ---
+
+  async init() {
+    try {
+        const db = await this.getDB();
+        
+        // 1. Check if we need to migrate from LocalStorage
+        const legacyRecords = localStorage.getItem(STORAGE_KEYS_LEGACY.RECORDS);
+        if (legacyRecords) {
+            await this.migrateFromLocalStorage();
+        } else {
+            // 2. Check if we need to seed initial data (Users/Cities)
+            const users = await this.getAll<User>(STORE_USERS);
+            if (users.length === 0) {
+                await this.bulkPut(STORE_USERS, SEED_USERS);
+            }
+            
+            const cityConfig = await this.get<{key: string, value: string[]}>(STORE_CONFIG, 'cities');
+            if (!cityConfig) {
+                await this.put(STORE_CONFIG, { key: 'cities', value: DEFAULT_CITIES });
+            }
+        }
+    } catch (e) {
+        console.error("DB Init Failed", e);
+    }
+  }
+
+  private async migrateFromLocalStorage() {
+      console.log("Migrating from LocalStorage to IndexedDB...");
+      try {
+          // Records
+          const records = JSON.parse(localStorage.getItem(STORAGE_KEYS_LEGACY.RECORDS) || '[]');
+          if(records.length > 0) await this.bulkPut(STORE_RECORDS, records);
+          
+          // Users
+          let users = JSON.parse(localStorage.getItem(STORAGE_KEYS_LEGACY.USERS) || '[]');
+          if (users.length === 0) users = SEED_USERS;
+          await this.bulkPut(STORE_USERS, users);
+
+          // Requests
+          const requests = JSON.parse(localStorage.getItem(STORAGE_KEYS_LEGACY.REQUESTS) || '[]');
+          if(requests.length > 0) await this.bulkPut(STORE_REQUESTS, requests);
+
+          // Bin
+          const bin = JSON.parse(localStorage.getItem(STORAGE_KEYS_LEGACY.BIN) || '[]');
+          // Bin items in legacy didn't have a binId, autoIncrement will handle it
+          if(bin.length > 0) await this.bulkPut(STORE_BIN, bin);
+
+          // Cities
+          const cities = JSON.parse(localStorage.getItem(STORAGE_KEYS_LEGACY.CITIES) || JSON.stringify(DEFAULT_CITIES));
+          await this.put(STORE_CONFIG, { key: 'cities', value: cities });
+
+          // Cleanup LocalStorage
+          localStorage.removeItem(STORAGE_KEYS_LEGACY.RECORDS);
+          localStorage.removeItem(STORAGE_KEYS_LEGACY.REQUESTS);
+          localStorage.removeItem(STORAGE_KEYS_LEGACY.BIN);
+          // We keep USERS and CITIES keys in LS as backups or remove them? 
+          // Let's remove to ensure single source of truth, but AUTH component might be reading LS in this demo.
+          // Wait, the Auth component in this app calls db.login(), which we will update.
+          localStorage.removeItem(STORAGE_KEYS_LEGACY.USERS); 
+          localStorage.removeItem(STORAGE_KEYS_LEGACY.CITIES);
+          
+          console.log("Migration Complete.");
+      } catch (e) {
+          console.error("Migration Failed", e);
+      }
+  }
+
+  // --- Public API ---
+
+  // Subscriptions
+  subscribeToRecords(callback: RecordListener): () => void {
+    this.listeners.push(callback);
+    this.getRecords().then(records => callback(records));
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== callback);
+    };
+  }
+
+  private async notifyListeners() {
+    const records = await this.getRecords();
+    this.listeners.forEach(l => l(records));
+  }
+
+  // Auth
+  async login(employeeId: string): Promise<User | null> {
+    const users = await this.getAll<User>(STORE_USERS);
+    return users.find(u => u.employeeId === employeeId) || null;
+  }
+
+  async verifyPin(userId: string, pin: string): Promise<boolean> {
+    const user = await this.get<User>(STORE_USERS, userId);
+    return user ? user.pin === pin : false;
+  }
+
+  // Cities
+  async getCities(): Promise<string[]> {
+    const config = await this.get<{key: string, value: string[]}>(STORE_CONFIG, 'cities');
+    return config ? config.value : DEFAULT_CITIES;
+  }
+
+  async addCity(city: string): Promise<void> {
+    const cities = await this.getCities();
+    if (!cities.includes(city)) {
+      cities.push(city);
+      await this.put(STORE_CONFIG, { key: 'cities', value: cities });
+    }
+  }
+
+  async deleteCity(city: string): Promise<void> {
+    const cities = await this.getCities();
+    const updated = cities.filter(c => c !== city);
+    await this.put(STORE_CONFIG, { key: 'cities', value: updated });
+  }
+
+  // Records
+  async getRecords(): Promise<CommercialRecord[]> {
+    return this.getAll<CommercialRecord>(STORE_RECORDS);
+  }
+
+  async addRecords(records: CommercialRecord[]): Promise<void> {
+    await this.bulkPut(STORE_RECORDS, records);
+    await this.notifyListeners();
+  }
+
+  async updateRecord(updatedRecord: CommercialRecord): Promise<void> {
+    await this.put(STORE_RECORDS, updatedRecord);
+    await this.notifyListeners();
+  }
+
+  async updateRecords(updatedRecords: CommercialRecord[]): Promise<void> {
+    await this.bulkPut(STORE_RECORDS, updatedRecords);
+    await this.notifyListeners();
+  }
+
+  async deleteRecord(recordId: string, movedToBinBy: string): Promise<void> {
+      const record = await this.get<CommercialRecord>(STORE_RECORDS, recordId);
+      if (record) {
+          await this.put(STORE_BIN, { ...record, deletedBy: movedToBinBy, deletedAt: Date.now() });
+          await this.delete(STORE_RECORDS, recordId);
+          await this.notifyListeners();
+      }
+  }
+
+  async deleteRecords(recordIds: string[], movedToBinBy: string): Promise<void> {
+      // PHASE 1: READ - Fetch all records to be deleted
+      // We do this separately to avoid keeping a read-write transaction open during potential read delays
+      const recordsToDelete: CommercialRecord[] = [];
+      const db = await this.getDB();
+      
+      const readTx = db.transaction(STORE_RECORDS, 'readonly');
+      const readStore = readTx.objectStore(STORE_RECORDS);
+      
+      const readPromises = recordIds.map(id => new Promise<CommercialRecord | undefined>((resolve) => {
+          const req = readStore.get(id);
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => resolve(undefined);
+      }));
+
+      const results = await Promise.all(readPromises);
+      results.forEach(r => { if(r) recordsToDelete.push(r); });
+
+      if (recordsToDelete.length === 0) return;
+
+      // PHASE 2: WRITE - Move to Bin and Delete
+      return new Promise((resolve, reject) => {
+          const writeTx = db.transaction([STORE_RECORDS, STORE_BIN], 'readwrite');
+          const recordStore = writeTx.objectStore(STORE_RECORDS);
+          const binStore = writeTx.objectStore(STORE_BIN);
+          const timestamp = Date.now();
+
+          recordsToDelete.forEach(rec => {
+              // 1. Put to Bin
+              binStore.put({ ...rec, deletedBy: movedToBinBy, deletedAt: timestamp });
+              // 2. Delete from Records
+              recordStore.delete(rec.id);
+          });
+
+          writeTx.oncomplete = () => {
+              this.notifyListeners();
+              resolve();
+          };
+
+          writeTx.onerror = (e) => {
+              console.error("Delete Transaction Failed", writeTx.error);
+              reject(writeTx.error);
+          };
+      });
+  }
+
+  async getBinRecords(): Promise<any[]> {
+    return this.getAll(STORE_BIN);
+  }
+
+  async clearAllRecords(clearedBy: string): Promise<void> {
+    // 1. Fetch all records to move to bin (Read)
+    const records = await this.getAll<CommercialRecord>(STORE_RECORDS);
+    
+    // 2. Perform writes in a single transaction (Write)
+    const db = await this.getDB();
+    
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_RECORDS, STORE_BIN, STORE_REQUESTS], 'readwrite');
+        const recordStore = tx.objectStore(STORE_RECORDS);
+        const binStore = tx.objectStore(STORE_BIN);
+        const reqStore = tx.objectStore(STORE_REQUESTS);
+        const timestamp = Date.now();
+
+        // Move to Bin
+        records.forEach(r => {
+             binStore.put({ ...r, deletedBy: clearedBy, deletedAt: timestamp, note: 'BATCH_CLEAR_MONTH_END' });
+        });
+
+        // Clear Stores
+        recordStore.clear();
+        reqStore.clear();
+
+        tx.oncomplete = () => {
+            this.notifyListeners();
+            resolve();
+        };
+        
+        tx.onerror = (e) => {
+            console.error("Clear Transaction Failed", tx.error);
+            reject(tx.error);
+        };
+    });
+  }
+
+  // Requests
+  async getDuplicateRequests(): Promise<DuplicateRequest[]> {
+    return this.getAll<DuplicateRequest>(STORE_REQUESTS);
+  }
+
+  async createDuplicateRequest(request: DuplicateRequest): Promise<void> {
+    await this.put(STORE_REQUESTS, request);
+  }
+
+  async createDuplicateRequests(requests: DuplicateRequest[]): Promise<void> {
+    await this.bulkPut(STORE_REQUESTS, requests);
+  }
+
+  async resolveDuplicateRequest(requestId: string, status: 'APPROVED' | 'REJECTED', resolverId: string): Promise<void> {
+    const request = await this.get<DuplicateRequest>(STORE_REQUESTS, requestId);
+    if (!request) return;
+
+    request.status = status;
+    await this.put(STORE_REQUESTS, request); // Update status
+
+    if (status === 'APPROVED') {
+        const newRec = request.payload;
+        const allRecords = await this.getRecords();
+        const isInvoice = newRec.type === CommercialType.ON_INVOICE || newRec.type === CommercialType.OFF_INVOICE;
+        
+        // Find Conflicts
+        let idsToDelete: string[] = [];
+
+        if (isInvoice) {
+            idsToDelete = allRecords.filter(r => 
+                r.fsn === newRec.fsn &&
+                r.city === newRec.city &&
+                r.type === newRec.type &&
+                r.startDate === newRec.startDate &&
+                r.endDate === newRec.endDate
+            ).map(r => r.id);
+        } else {
+             idsToDelete = allRecords.filter(r => 
+                r.fsn === newRec.fsn &&
+                r.city === newRec.city &&
+                r.type === newRec.type &&
+                (newRec.startDate <= r.endDate && newRec.endDate >= r.startDate)
+            ).map(r => r.id);
+        }
+
+        if (idsToDelete.length > 0) {
+            await this.deleteRecords(idsToDelete, resolverId);
+        }
+        await this.addRecords([newRec]);
+    }
+  }
+}
+
+export const db = new DBService();
