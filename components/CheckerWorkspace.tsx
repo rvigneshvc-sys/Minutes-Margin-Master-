@@ -231,7 +231,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
 
       // Wrap in setTimeout to ensure UI updates before heavy parsing
       setTimeout(() => {
-        Papa.parse(file, {
+        Papa.parse(file as any, {
             header: true,
             skipEmptyLines: true,
             complete: (results) => {
