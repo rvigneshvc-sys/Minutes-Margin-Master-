@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CommercialRecord, CommercialType, DuplicateRequest, User, COMMERCIAL_TYPES } from '../types';
 import { db } from '../services/db';
-import { Plus, Upload, Save, AlertTriangle, FileText, X, Download, Check, Trash2, ArrowUpRight, ShieldAlert, User as UserIcon, Layers, Info, Loader2, Clock } from 'lucide-react';
+import { Plus, Upload, Save, AlertTriangle, FileText, X, Download, Check, Trash2, ArrowUpRight, ShieldAlert, User as UserIcon, Layers, Info, Loader2, Clock, StopCircle } from 'lucide-react';
 import Papa from 'papaparse';
 
 interface MakerProps {
@@ -40,6 +40,9 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
   const [progress, setProgress] = useState(0);
   const [eta, setEta] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState<string>('');
+  
+  // Process Control
+  const abortController = useRef<boolean>(false);
 
   // Approval Modal State
   const [showApprovalModal, setShowApprovalModal] = useState(false);
@@ -301,17 +304,26 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
       setNotification({ msg, type });
   };
 
+  const handleCancelProcessing = () => {
+      abortController.current = true;
+      setProcessingStatus('Cancelling...');
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Reset State
+    abortController.current = false;
     setLoading(true);
-    setProcessingStatus('Parsing CSV...');
+    setProcessingStatus('Initializing...');
     setProgress(0);
     setEta('Starting...');
 
     // Use setTimeout to allow the UI to render the loading state before parsing logic locks thread
     setTimeout(() => {
+        setProcessingStatus('Parsing CSV file...');
+        
         Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
@@ -323,6 +335,12 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
             e.target.value = '';
         },
         complete: async (results) => {
+            if (abortController.current) {
+                setLoading(false);
+                setNotification({ msg: 'Upload cancelled.', type: 'warning' });
+                return;
+            }
+
             try {
                 const headers = results.meta.fields || [];
                 
@@ -391,24 +409,37 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                 let maxRecordValue = 0;
                 
                 // Chunk Processing for Progress Bar
-                const BATCH_SIZE = 500;
+                const BATCH_SIZE = 200; // Smaller batch size for smoother UI
                 const totalRows = results.data.length;
                 const startTime = Date.now();
                 
-                setProcessingStatus(`Processing ${totalRows} records...`);
+                setProcessingStatus(`Analyzing ${totalRows} records...`);
 
                 // Helper function to process batch
                 const processBatch = async () => {
                     for (let i = 0; i < totalRows; i++) {
+                        // Check Cancel Signal
+                        if (abortController.current) {
+                            throw new Error("Cancelled by user");
+                        }
+
                         // Yield to UI every BATCH_SIZE iterations
                         if (i % BATCH_SIZE === 0 && i > 0) {
                             const percent = Math.round((i / totalRows) * 100);
-                            const elapsed = (Date.now() - startTime) / 1000;
-                            const rate = i / elapsed;
-                            const remainingSeconds = (totalRows - i) / rate;
+                            const elapsed = (Date.now() - startTime) / 1000; // seconds
+                            const rate = i / (elapsed || 1); // rows per second
+                            const remainingRows = totalRows - i;
+                            const remainingSeconds = remainingRows / (rate || 1);
                             
                             setProgress(percent);
-                            setEta(remainingSeconds < 60 ? `${Math.ceil(remainingSeconds)}s` : `${Math.ceil(remainingSeconds/60)}m`);
+                            
+                            let etaText = '';
+                            if (remainingSeconds < 60) etaText = `${Math.ceil(remainingSeconds)}s`;
+                            else if (remainingSeconds < 3600) etaText = `${Math.ceil(remainingSeconds/60)}m`;
+                            else etaText = `${(remainingSeconds/3600).toFixed(1)}h`;
+                            
+                            setEta(etaText);
+                            setProcessingStatus(`Processed ${i}/${totalRows} rows...`);
                             
                             // Allow UI to render
                             await new Promise(resolve => setTimeout(resolve, 0));
@@ -563,7 +594,7 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                 }
 
                 setProcessingStatus('Finalizing Database...');
-                setProgress(95);
+                setProgress(98);
 
                 // 1. Add Valid Records
                 if (newRecords.length > 0) {
@@ -606,8 +637,12 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                     }, 500);
                 }
             } catch (err: any) {
-                console.error("Upload error:", err);
-                setNotification({ msg: `Upload Failed: ${err.message || 'Unknown error occurred during processing'}`, type: 'error' });
+                if (err.message === "Cancelled by user") {
+                    setNotification({ msg: 'Upload processing cancelled.', type: 'warning' });
+                } else {
+                    console.error("Upload error:", err);
+                    setNotification({ msg: `Upload Failed: ${err.message || 'Unknown error occurred during processing'}`, type: 'error' });
+                }
                 setLoading(false);
                 setProgress(0);
                 setEta(null);
@@ -677,32 +712,46 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
       
       {/* Progress Overlay */}
       {loading && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm">
-              <div className="bg-white p-8 rounded-lg shadow-2xl max-w-md w-full animate-in zoom-in duration-200">
-                  <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-bold text-gray-800 text-lg">Processing Task</h3>
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm transition-opacity duration-300">
+              <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200 border border-gray-100">
+                  <div className="flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3">
+                          <div className="bg-blue-50 p-2 rounded-full">
+                              <Loader2 className="w-5 h-5 text-fkBlue animate-spin" />
+                          </div>
+                          <div>
+                              <h3 className="font-bold text-gray-800 text-lg leading-tight">Processing Upload</h3>
+                              <p className="text-xs text-gray-500 font-medium">{processingStatus}</p>
+                          </div>
+                      </div>
                       {eta && (
-                          <span className="text-xs font-mono bg-blue-50 text-fkBlue px-2 py-1 rounded flex items-center gap-1">
-                             <Clock className="w-3 h-3"/> {eta} remaining
-                          </span>
+                          <div className="flex flex-col items-end">
+                              <span className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">Est. Remaining</span>
+                              <span className="text-sm font-mono bg-gray-100 text-gray-700 px-2 py-0.5 rounded flex items-center gap-1.5 mt-1">
+                                 <Clock className="w-3 h-3 text-gray-500"/> {eta}
+                              </span>
+                          </div>
                       )}
                   </div>
                   
-                  <div className="w-full bg-gray-200 rounded-full h-4 mb-2 overflow-hidden">
+                  <div className="w-full bg-gray-100 rounded-full h-3 mb-2 overflow-hidden shadow-inner">
                       <div 
-                        className="bg-fkBlue h-4 rounded-full transition-all duration-300 ease-out flex items-center justify-end pr-2"
+                        className={`h-3 rounded-full transition-all duration-300 ease-out flex items-center justify-end pr-1 relative ${progress < 100 ? 'bg-gradient-to-r from-fkBlue to-blue-400 animate-pulse' : 'bg-green-500'}`}
                         style={{ width: `${progress}%` }}
-                      >
-                          {progress > 10 && <span className="text-[9px] text-white font-bold">{progress}%</span>}
-                      </div>
+                      />
                   </div>
                   
-                  <div className="flex justify-between text-xs text-gray-500">
-                      <span className="flex items-center gap-2">
-                          <Loader2 className="w-3 h-3 animate-spin"/> {processingStatus || 'Please wait...'}
-                      </span>
-                      <span>{progress}%</span>
+                  <div className="flex justify-between text-xs text-gray-500 font-medium mb-6">
+                      <span>{progress}% Complete</span>
+                      {progress < 100 && <span className="text-fkBlue animate-pulse">Working...</span>}
                   </div>
+
+                  <button 
+                    onClick={handleCancelProcessing}
+                    className="w-full py-2.5 border border-red-200 text-red-600 hover:bg-red-50 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2"
+                  >
+                    <StopCircle className="w-4 h-4" /> Cancel Process
+                  </button>
               </div>
           </div>
       )}

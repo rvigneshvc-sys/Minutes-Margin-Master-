@@ -22,14 +22,15 @@ const STORAGE_KEYS_LEGACY = {
 const SEED_USERS: User[] = [
   { id: '1', employeeId: 'maker1', name: 'Maker', role: Role.MAKER },
   { id: '2', employeeId: 'checker1', name: 'Checker', role: Role.CHECKER, pin: '1234' },
-  { id: '3', employeeId: 'admin1', name: 'Admin', role: Role.ADMIN, pin: '9999' },
 ];
 
 type RecordListener = (records: CommercialRecord[]) => void;
+type CityListener = (cities: string[]) => void;
 
 class DBService {
   private dbPromise: Promise<IDBDatabase> | null = null;
   private listeners: RecordListener[] = [];
+  private cityListeners: CityListener[] = [];
 
   constructor() {
     this.init();
@@ -216,7 +217,7 @@ class DBService {
 
   // --- Public API ---
 
-  // Subscriptions
+  // Subscriptions - Records
   subscribeToRecords(callback: RecordListener): () => void {
     this.listeners.push(callback);
     this.getRecords().then(records => callback(records));
@@ -228,6 +229,20 @@ class DBService {
   private async notifyListeners() {
     const records = await this.getRecords();
     this.listeners.forEach(l => l(records));
+  }
+
+  // Subscriptions - Cities
+  subscribeToCities(callback: CityListener): () => void {
+    this.cityListeners.push(callback);
+    this.getCities().then(c => callback(c));
+    return () => {
+      this.cityListeners = this.cityListeners.filter(l => l !== callback);
+    };
+  }
+
+  private async notifyCityListeners() {
+      const cities = await this.getCities();
+      this.cityListeners.forEach(l => l(cities));
   }
 
   // Auth
@@ -252,6 +267,7 @@ class DBService {
     if (!cities.includes(city)) {
       cities.push(city);
       await this.put(STORE_CONFIG, { key: 'cities', value: cities });
+      this.notifyCityListeners();
     }
   }
 
@@ -259,6 +275,7 @@ class DBService {
     const cities = await this.getCities();
     const updated = cities.filter(c => c !== city);
     await this.put(STORE_CONFIG, { key: 'cities', value: updated });
+    this.notifyCityListeners();
   }
 
   // Records

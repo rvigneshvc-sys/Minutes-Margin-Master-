@@ -1,8 +1,7 @@
 
 export enum Role {
   MAKER = 'MAKER',
-  CHECKER = 'CHECKER',
-  ADMIN = 'ADMIN'
+  CHECKER = 'CHECKER'
 }
 
 export enum CommercialType {

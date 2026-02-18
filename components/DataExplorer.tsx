@@ -48,27 +48,22 @@ export const DataExplorer: React.FC<DataExplorerProps> = ({ user }) => {
   const canEdit = user.role !== Role.MAKER;
 
   useEffect(() => {
-    let unsubscribe: () => void;
+    setLoading(true);
+    
+    // Subscribe to Cities (Real-time updates)
+    const unsubCities = db.subscribeToCities((data) => {
+      setCities(data);
+    });
 
-    const init = async () => {
-      setLoading(true);
-      try {
-        const c = await db.getCities();
-        setCities(c);
-        unsubscribe = db.subscribeToRecords((data) => {
-          setRecords(data);
-          setLoading(false);
-        });
-      } catch (e) {
-        console.error("Failed to load data", e);
-        setLoading(false);
-      }
-    };
-
-    init();
+    // Subscribe to Records (Real-time updates, acts like onSnapshot)
+    const unsubRecords = db.subscribeToRecords((data) => {
+      setRecords(data);
+      setLoading(false);
+    });
 
     return () => {
-      if (unsubscribe) unsubscribe();
+      unsubCities();
+      unsubRecords();
     };
   }, []);
 
@@ -318,6 +313,9 @@ export const DataExplorer: React.FC<DataExplorerProps> = ({ user }) => {
   };
 
   const refreshCities = async () => {
+    // Legacy manual refresh, primarily triggers a re-fetch via db.getCities()
+    // but the subscription handles updates automatically now.
+    // Keeping for manual user trigger confidence.
     setLoading(true);
     const c = await db.getCities();
     setCities(c);

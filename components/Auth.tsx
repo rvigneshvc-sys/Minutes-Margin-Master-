@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { db } from '../services/db';
 import { User, Role } from '../types';
-import { ShieldCheck, Loader2, Briefcase, ArrowRight, Zap } from 'lucide-react';
+import { ShieldCheck, Loader2, Zap } from 'lucide-react';
 
 interface AuthProps {
   onLogin: (user: User) => void;
@@ -14,7 +14,6 @@ export const Login: React.FC<AuthProps> = ({ onLogin }) => {
     let empId = '';
     if (role === Role.MAKER) empId = 'maker1';
     else if (role === Role.CHECKER) empId = 'checker1';
-    else if (role === Role.ADMIN) empId = 'admin1';
 
     setLoading(empId);
     
@@ -32,51 +31,72 @@ export const Login: React.FC<AuthProps> = ({ onLogin }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[#f1f3f6] p-4 font-sans">
-      <div className="bg-white p-8 rounded shadow-lg w-full max-w-lg border border-gray-200">
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center bg-fkBlue text-white p-3 rounded-full mb-4 shadow-lg shadow-blue-200">
-            <Zap className="w-8 h-8 fill-current" />
+      <div className="bg-white rounded-sm shadow-md w-full max-w-4xl flex overflow-hidden min-h-[500px]">
+        {/* Left Panel - Blue Branding */}
+        <div className="hidden md:flex w-2/5 bg-fkBlue p-10 flex-col justify-between text-white relative overflow-hidden">
+          <div className="z-10">
+            <h2 className="text-3xl font-medium mb-4">Login</h2>
+            <p className="text-lg text-blue-100 font-light leading-relaxed">
+              Get access to Commercial Operations, Audits and Approval Workflows
+            </p>
           </div>
-          <h1 className="text-3xl font-bold mb-1 text-gray-800">Minutes<span className="text-fkBlue italic">Master</span></h1>
-          <p className="text-gray-500">Commercial Operations Portal</p>
+          
+          <div className="z-10 mt-auto mb-10">
+             <div className="flex items-center gap-2 mb-2">
+                <div className="bg-white/20 p-2 rounded">
+                   <Zap className="w-8 h-8 text-fkYellow fill-current" />
+                </div>
+                <span className="text-2xl font-bold italic tracking-tighter">Minutes Master</span>
+             </div>
+          </div>
+
+          {/* Decorative Circle */}
+          <div className="absolute -bottom-20 -left-20 w-64 h-64 bg-blue-500 rounded-full opacity-50 blur-3xl"></div>
+          <div className="absolute top-20 -right-20 w-40 h-40 bg-blue-400 rounded-full opacity-30 blur-2xl"></div>
         </div>
 
-        <div className="space-y-4">
-           {/* Maker Login */}
-           <button
-             onClick={() => handleRoleLogin(Role.MAKER)}
-             disabled={!!loading}
-             className="w-full group relative flex items-center p-5 bg-white border border-gray-200 hover:border-fkBlue rounded-lg transition-all duration-300 text-left shadow-sm hover:shadow-md"
-           >
-             <div className="h-12 w-12 bg-purple-50 rounded-lg flex items-center justify-center mr-5 border border-purple-100">
-               <Briefcase className="w-6 h-6 text-purple-600" />
-             </div>
-             <div className="flex-1">
-               <h3 className="font-bold text-lg text-gray-800 group-hover:text-fkBlue transition-colors">Maker Workspace</h3>
-               <p className="text-sm text-gray-500">Data Entry & Bulk Uploads</p>
-             </div>
-             <div className="text-gray-400 group-hover:text-fkBlue group-hover:translate-x-1 transition-all">
-                {loading === 'maker1' ? <Loader2 className="animate-spin w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
-             </div>
-           </button>
+        {/* Right Panel - Login Form */}
+        <div className="flex-1 p-10 flex flex-col justify-center">
+          
+          <div className="md:hidden text-center mb-8">
+             <h1 className="text-2xl font-bold text-fkBlue italic">Minutes Master</h1>
+             <p className="text-gray-500 text-sm">Commercial Operations Portal</p>
+          </div>
 
-           {/* Checker Login */}
-           <button
-             onClick={() => handleRoleLogin(Role.CHECKER)}
-             disabled={!!loading}
-             className="w-full group relative flex items-center p-5 bg-white border border-gray-200 hover:border-fkYellow rounded-lg transition-all duration-300 text-left shadow-sm hover:shadow-md"
-           >
-             <div className="h-12 w-12 bg-yellow-50 rounded-lg flex items-center justify-center mr-5 border border-yellow-100">
-               <ShieldCheck className="w-6 h-6 text-fkYellow" />
+          <div className="space-y-6 max-w-md mx-auto w-full">
+             
+             {/* Maker Login */}
+             <div className="relative group">
+                <button
+                  onClick={() => handleRoleLogin(Role.MAKER)}
+                  disabled={!!loading}
+                  className="w-full bg-fkYellow text-white font-medium py-3 rounded-sm shadow-sm hover:shadow-md transition-all flex items-center justify-center gap-3"
+                >
+                  {loading === 'maker1' ? <Loader2 className="animate-spin w-5 h-5" /> : null}
+                  <span>Login as Maker (Category Manager)</span>
+                </button>
+                <p className="text-xs text-gray-400 text-center mt-2">Access for data entry and bulk uploads</p>
              </div>
-             <div className="flex-1">
-               <h3 className="font-bold text-lg text-gray-800 group-hover:text-fkYellow transition-colors">Checker Workspace</h3>
-               <p className="text-sm text-gray-500">Audits & Approvals</p>
+
+             <div className="relative flex py-2 items-center">
+                <div className="flex-grow border-t border-gray-200"></div>
+                <span className="flex-shrink-0 mx-4 text-gray-400 text-xs uppercase">OR</span>
+                <div className="flex-grow border-t border-gray-200"></div>
              </div>
-             <div className="text-gray-400 group-hover:text-fkYellow group-hover:translate-x-1 transition-all">
-                {loading === 'checker1' ? <Loader2 className="animate-spin w-5 h-5" /> : <ArrowRight className="w-5 h-5" />}
+
+             {/* Checker Login */}
+             <div className="relative group">
+                <button
+                  onClick={() => handleRoleLogin(Role.CHECKER)}
+                  disabled={!!loading}
+                  className="w-full bg-white border border-gray-200 text-fkBlue font-medium py-3 rounded-sm shadow-sm hover:shadow hover:bg-gray-50 transition-all flex items-center justify-center gap-3"
+                >
+                  {loading === 'checker1' ? <Loader2 className="animate-spin w-5 h-5" /> : null}
+                  <span>Login as Checker (Finance/Audit)</span>
+                </button>
+                <p className="text-xs text-gray-400 text-center mt-2">Requires PIN verification for audit access</p>
              </div>
-           </button>
+          </div>
         </div>
       </div>
     </div>
@@ -108,34 +128,37 @@ export const PinVerification: React.FC<PinProps> = ({ user, onSuccess, onCancel 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm">
-      <div className="bg-white p-8 rounded shadow-2xl w-full max-w-sm relative animate-in fade-in zoom-in duration-200 border border-gray-200">
-        <button onClick={onCancel} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">✕</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm">
+      <div className="bg-white p-6 rounded-sm shadow-lg w-full max-w-sm relative animate-in fade-in zoom-in duration-200">
+        <button onClick={onCancel} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl font-light">✕</button>
         
-        <div className="text-center mb-6">
-          <div className="mx-auto w-12 h-12 bg-yellow-50 rounded-full flex items-center justify-center mb-3">
-             <ShieldCheck className="text-fkYellow w-6 h-6" />
-          </div>
-          <h2 className="text-xl font-bold text-gray-800">Security Check</h2>
-          <p className="text-sm text-gray-500">Enter PIN to access Checker Workspace</p>
+        <div className="text-center mb-8 mt-2">
+          <h2 className="text-lg font-medium text-gray-800">Verify Identity</h2>
+          <p className="text-xs text-gray-500 mt-1">Enter PIN to access Checker Workspace</p>
         </div>
 
-        <form onSubmit={verify} className="space-y-4">
-          <input
-            type="password"
-            maxLength={4}
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            className="w-full text-center text-3xl tracking-[1em] font-bold bg-gray-50 border border-gray-300 rounded py-3 text-gray-800 focus:border-fkBlue focus:ring-1 focus:ring-fkBlue outline-none transition-all"
-            autoFocus
-          />
-          {error && <p className="text-red-500 text-center text-sm font-medium">{error}</p>}
+        <form onSubmit={verify} className="space-y-6">
+          <div className="relative">
+            <input
+              type="password"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              className="w-full text-center text-2xl tracking-[0.5em] font-medium border-b-2 border-gray-300 py-2 text-gray-800 focus:border-fkBlue outline-none transition-colors"
+              autoFocus
+              placeholder="••••"
+            />
+            <label className="absolute -top-3 left-0 w-full text-center text-[10px] text-gray-400 uppercase tracking-widest">Security PIN</label>
+          </div>
+          
+          {error && <p className="text-red-500 text-center text-xs font-medium">{error}</p>}
+          
           <button
             type="submit"
             disabled={loading || pin.length < 4}
-            className="w-full bg-fkYellow hover:bg-yellow-500 text-white font-bold py-3 rounded shadow-md transition-colors flex justify-center"
+            className="w-full bg-fkBlue hover:bg-blue-600 text-white font-medium py-3 rounded-sm shadow-sm transition-colors flex justify-center uppercase text-sm tracking-wide"
           >
-            {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Unlock Workspace'}
+            {loading ? <Loader2 className="animate-spin h-5 w-5" /> : 'Verify'}
           </button>
         </form>
       </div>

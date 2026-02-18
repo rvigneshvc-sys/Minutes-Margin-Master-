@@ -16,29 +16,64 @@
               fkBg: '#f1f3f6',
               fkText: '#212121',
               fkSub: '#878787',
+              fkBorder: '#f0f0f0',
+              fkPurple: '#6320ee', // Minutes branding accent
             },
             fontFamily: {
-              sans: ['Inter', 'sans-serif'],
+              sans: ['Roboto', 'sans-serif'],
             },
             boxShadow: {
               'card': '0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px 0 rgba(0,0,0,0.06)',
+              'fk': '0 2px 4px 0 rgba(0,0,0,.08)',
             }
           }
         }
       }
     </script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
       body { 
-        font-family: 'Inter', sans-serif; 
+        font-family: 'Roboto', sans-serif; 
         background-color: #f1f3f6; 
         color: #212121; 
+        -webkit-font-smoothing: antialiased;
       }
       .fk-card {
         background: white;
-        border-radius: 0.5rem; /* rounded-lg */
-        box-shadow: 0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px 0 rgba(0,0,0,0.06);
+        border-radius: 2px;
+        box-shadow: 0 2px 4px 0 rgba(0,0,0,.08);
+        border: 1px solid #f0f0f0;
+      }
+      .fk-btn-primary {
+        background-color: #ff9f00;
+        color: white;
+        font-weight: 500;
+        border-radius: 2px;
+        box-shadow: 0 1px 2px 0 rgba(0,0,0,.2);
+        transition: all 0.2s;
+      }
+      .fk-btn-primary:hover {
+        background-color: #f39700;
+      }
+      .fk-btn-secondary {
+        background-color: white;
+        color: #2874f0;
+        font-weight: 500;
         border: 1px solid #e0e0e0;
+        border-radius: 2px;
+        box-shadow: 0 1px 2px 0 rgba(0,0,0,.1);
+      }
+      .fk-input {
+        border: none;
+        border-bottom: 1px solid #e0e0e0;
+        border-radius: 0;
+        padding: 8px 0;
+        transition: border-color 0.2s;
+      }
+      .fk-input:focus {
+        outline: none;
+        border-bottom-color: #2874f0;
+        ring: 0;
       }
       .scrollbar-hide::-webkit-scrollbar {
           display: none;
@@ -51,9 +86,7 @@
       @media print {
         body { background-color: white; }
         .no-print { display: none !important; }
-        /* Ensure the manual takes full width */
         #root { width: 100%; }
-        /* Hide scrollbars in print */
         ::-webkit-scrollbar { display: none; }
       }
     </style>

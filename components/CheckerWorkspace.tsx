@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../services/db';
 import { DuplicateRequest, User, CommercialType, CommercialRecord } from '../types';
 import { Check, X, Search, BarChart3, Archive, TrendingUp, AlertCircle, FileDown, Calendar, Trash2, Database, Clock, ChevronDown, User as UserIcon, Layers, Upload, FileText, RefreshCw, Loader2, CheckSquare } from 'lucide-react';
@@ -16,6 +16,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   
   // Selection State for Approvals
   const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
+  const [approvalSearchTerm, setApprovalSearchTerm] = useState('');
   
   // Audit State (Single)
   const [auditMode, setAuditMode] = useState<'SINGLE' | 'BULK'>('SINGLE');
@@ -73,6 +74,17 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
           return changed ? next : prev;
       });
   }, [requests]);
+
+  const filteredRequests = useMemo(() => {
+    if (!approvalSearchTerm.trim()) return requests;
+    const lowerTerm = approvalSearchTerm.toLowerCase();
+    return requests.filter(req => 
+      req.payload.fsn.toLowerCase().includes(lowerTerm) ||
+      req.payload.title.toLowerCase().includes(lowerTerm) ||
+      req.requestedBy.toLowerCase().includes(lowerTerm) ||
+      (req.payload.kam && req.payload.kam.toLowerCase().includes(lowerTerm))
+    );
+  }, [requests, approvalSearchTerm]);
 
   const loadCities = async () => {
     const c = await db.getCities();
@@ -231,7 +243,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
 
       // Wrap in setTimeout to ensure UI updates before heavy parsing
       setTimeout(() => {
-        Papa.parse(file as any, {
+        Papa.parse(file, {
             header: true,
             skipEmptyLines: true,
             complete: (results) => {
@@ -298,13 +310,14 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                    await new Promise(resolve => setTimeout(resolve, 0));
                }
 
-               const row = bulkAuditData[i] as any;
+               const row = bulkAuditData[i] as Record<string, any>;
+               if (!row) continue;
+
                // Fix: Ensure FSN is treated as a string
                const fsnRaw = row['FSN'];
                const fsn = fsnRaw ? String(fsnRaw) : '';
                
                // Fix: Ensure value is string before passing to parseFloat to avoid 'unknown' type error
-               // Explicitly convert to string to handle 'unknown' types safely
                const marginValRaw = row['Margin Value'];
                const marginValStr = (marginValRaw !== undefined && marginValRaw !== null) ? String(marginValRaw) : '0';
                const targetVal = parseFloat(marginValStr);
@@ -315,7 +328,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                if (!fsn) continue;
 
                // OPTIMIZATION: Use Map Index instead of array.filter
-               const candidates = fsnIndex.get(fsn) || [];
+               const candidates = fsnIndex.get(fsn as string) || [];
                const activeRecords = candidates.filter(r => 
                    (r.city === bulkAuditCity || r.city === 'PAN-INDIA') &&
                    r.startDate <= today && r.endDate >= today
@@ -414,11 +427,17 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   };
 
   const toggleSelectAllRequests = () => {
-      if (selectedRequestIds.size === requests.length) {
-          setSelectedRequestIds(new Set());
-      } else {
-          setSelectedRequestIds(new Set(requests.map(r => r.id)));
-      }
+      const allSelected = filteredRequests.length > 0 && filteredRequests.every(r => selectedRequestIds.has(r.id));
+      
+      setSelectedRequestIds(prev => {
+          const next = new Set(prev);
+          if (allSelected) {
+              filteredRequests.forEach(r => next.delete(r.id));
+          } else {
+              filteredRequests.forEach(r => next.add(r.id));
+          }
+          return next;
+      });
   };
 
   const handleBulkAction = async (action: 'APPROVED' | 'REJECTED') => {
@@ -947,11 +966,28 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
       {activeTab === 'APPROVALS' && (
         <div id="tour-checker-approvals" className="space-y-4">
            {requests.length > 0 && (
+               <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm flex items-center gap-2 mb-4">
+                    <Search className="w-5 h-5 text-gray-400" />
+                    <input 
+                        className="flex-1 bg-transparent outline-none text-sm text-gray-700 placeholder-gray-400"
+                        placeholder="Search by FSN, Title, KAM, or User..."
+                        value={approvalSearchTerm}
+                        onChange={(e) => setApprovalSearchTerm(e.target.value)}
+                    />
+                    {approvalSearchTerm && (
+                        <button onClick={() => setApprovalSearchTerm('')} className="text-gray-400 hover:text-gray-600">
+                            <X className="w-4 h-4" />
+                        </button>
+                    )}
+               </div>
+           )}
+
+           {filteredRequests.length > 0 && (
                 <div className="sticky top-0 z-10 bg-white p-4 rounded-lg border border-gray-200 shadow-sm flex justify-between items-center animate-in slide-in-from-top-2">
                     <div className="flex items-center gap-3">
                         <input 
                             type="checkbox"
-                            checked={requests.length > 0 && selectedRequestIds.size === requests.length}
+                            checked={filteredRequests.length > 0 && filteredRequests.every(r => selectedRequestIds.has(r.id))}
                             onChange={toggleSelectAllRequests}
                             className="w-5 h-5 rounded border-gray-300 text-fkBlue focus:ring-fkBlue cursor-pointer"
                         />
@@ -983,8 +1019,13 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
               <Check className="w-12 h-12 mx-auto mb-3 text-green-500 opacity-50" />
               <p className="text-gray-500 font-medium">No pending approvals.</p>
             </div>
+          ) : filteredRequests.length === 0 ? (
+             <div className="text-center py-20 bg-white rounded-lg border border-gray-200">
+                <Search className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <p className="text-gray-500 font-medium">No requests match "{approvalSearchTerm}".</p>
+             </div>
           ) : (
-            requests.map(req => (
+            filteredRequests.map(req => (
               <div key={req.id} className={`fk-card p-5 flex flex-col md:flex-row gap-4 border-l-4 border-l-fkYellow transition-colors ${selectedRequestIds.has(req.id) ? 'bg-blue-50/30' : ''}`}>
                 <div className="flex items-start gap-4 flex-1">
                      <input 

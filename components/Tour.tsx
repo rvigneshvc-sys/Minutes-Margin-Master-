@@ -6,7 +6,7 @@ export interface TourStep {
   content: string;
   targetId?: string; // ID of the element to highlight
   view: 'WORKSPACE' | 'EXPLORER' | 'MANUAL';
-  role: 'MAKER' | 'CHECKER' | 'ADMIN';
+  role: 'MAKER' | 'CHECKER';
   tab?: string; // Optional internal tab state to mention
 }
 
