@@ -151,6 +151,16 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
   const handleAddNewCity = async () => {
     if (!newCityCode) return;
     const code = newCityCode.toUpperCase().trim();
+
+    // Map PAN to PAN-INDIA
+    if (code === 'PAN') {
+        setFormData(prev => ({...prev, city: 'PAN-INDIA'}));
+        setNewCityCode('');
+        setIsAddingCity(false);
+        setNotification({ msg: `Mapped 'PAN' input to 'PAN-INDIA'.`, type: 'success' });
+        return;
+    }
+
     if (code !== 'PAN-INDIA' && code.length > 3) {
        setNotification({ msg: 'City code must be 3 characters or less.', type: 'error' });
        return;
@@ -377,6 +387,10 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
 
                 for (const h of potentialNewCities) {
                     const cleanCode = h.toUpperCase().trim().replace(/[^A-Z0-9]/g, '');
+                    
+                    // SKIP adding 'PAN' as a new city, it maps to PAN-INDIA
+                    if (cleanCode === 'PAN') continue;
+
                     // Basic check to assume it's a city if it's not one of our known columns and length is <=3
                     if (cleanCode.length > 0 && cleanCode.length <= 3 && !currentCities.includes(cleanCode)) {
                         await db.addCity(cleanCode);
@@ -487,6 +501,9 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                             
                             let targetCity = '';
                             if (key === headerMap['value'] || upperKey === 'VALUE') {
+                                targetCity = 'PAN-INDIA';
+                            } else if (cleanKey === 'PAN') {
+                                // Explicitly map PAN column to PAN-INDIA
                                 targetCity = 'PAN-INDIA';
                             } else if (currentCities.includes(cleanKey)) {
                                 targetCity = cleanKey;
@@ -689,13 +706,26 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
         extraCols.push('Unit');
     }
 
-    const headers = ['FSN', 'Brand', 'Title', 'Vertical', 'KAM', 'StartDate', 'EndDate', ...extraCols, ...cities];
+    // Dates are not required for Margin % as per business logic (defaults used)
+    const includeDates = bulkType !== CommercialType.MARGIN_PERCENT;
+
+    const baseHeaders = ['FSN', 'Brand', 'Title', 'Vertical', 'KAM'];
+    if (includeDates) {
+        baseHeaders.push('StartDate', 'EndDate');
+    }
+
+    const headers = [...baseHeaders, ...extraCols, ...cities];
     const isNLC = bulkType === CommercialType.NLC_VALUE;
     const exampleVal = isNLC ? '50000' : '10';
     const exampleUnit = isNLC ? 'Value' : 'Percent';
 
+    const baseRow = ['MOBEXAMPLE123456', 'BrandX', 'Sample Product 1', 'Mobiles', 'John Doe'];
+    if (includeDates) {
+        baseRow.push('2024-01-01', '2024-03-31');
+    }
+
     const dummyRows = [
-        ['MOBEXAMPLE123456', 'BrandX', 'Sample Product 1', 'Mobiles', 'John Doe', '2024-01-01', '2024-03-31', ...(extraCols.length ? [exampleUnit] : []), ...cities.map(() => exampleVal)],
+        [...baseRow, ...(extraCols.length ? [exampleUnit] : []), ...cities.map(() => exampleVal)],
     ];
     const csvContent = [headers.join(','), ...dummyRows.map(row => row.join(','))].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv' });

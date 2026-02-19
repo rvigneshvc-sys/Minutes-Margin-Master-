@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../services/db';
 import { DuplicateRequest, User, CommercialType, CommercialRecord } from '../types';
-import { Check, X, Search, BarChart3, Archive, TrendingUp, AlertCircle, FileDown, Calendar, Trash2, Database, Clock, ChevronDown, User as UserIcon, Layers, Upload, FileText, RefreshCw, Loader2, CheckSquare } from 'lucide-react';
+import { Check, X, Search, BarChart3, TrendingUp, AlertCircle, FileDown, Calendar, Trash2, Database, Clock, ChevronDown, User as UserIcon, Layers, Upload, FileText, RefreshCw, Loader2, CheckSquare } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, LabelList } from 'recharts';
 import Papa from 'papaparse';
 
@@ -45,10 +45,6 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [exportLoading, setExportLoading] = useState(false);
   
-  // Archive View State
-  const [showArchive, setShowArchive] = useState(false);
-  const [archiveData, setArchiveData] = useState<any[]>([]);
-
   // Safety Modal State
   const [showClearModal, setShowClearModal] = useState(false);
   const [clearConfirmationText, setClearConfirmationText] = useState('');
@@ -65,7 +61,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   useEffect(() => {
       const currentIds = new Set(requests.map(r => r.id));
       setSelectedRequestIds(prev => {
-          const next = new Set();
+          const next = new Set<string>();
           let changed = false;
           prev.forEach(id => {
               if (currentIds.has(id)) next.add(id);
@@ -103,16 +99,6 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   const loadRequests = async () => {
     const reqs = await db.getDuplicateRequests();
     setRequests(reqs.filter(r => r.status === 'PENDING'));
-  };
-
-  const loadArchive = async () => {
-    const data = await db.getBinRecords();
-    setArchiveData(data.sort((a: any, b: any) => b.deletedAt - a.deletedAt));
-  };
-
-  const toggleArchive = () => {
-      if (!showArchive) loadArchive();
-      setShowArchive(!showArchive);
   };
 
   const handleFsnChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -314,15 +300,15 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                if (!row) continue;
 
                // Fix: Ensure FSN is treated as a string
-               const fsnRaw = row['FSN'];
+               const fsnRaw = row['FSN'] as any;
                const fsn = fsnRaw ? String(fsnRaw) : '';
                
                // Fix: Ensure value is string before passing to parseFloat to avoid 'unknown' type error
-               const marginValRaw = row['Margin Value'];
+               const marginValRaw = row['Margin Value'] as any;
                const marginValStr = (marginValRaw !== undefined && marginValRaw !== null) ? String(marginValRaw) : '0';
                const targetVal = parseFloat(marginValStr);
 
-               const unitRaw = row['Margin Value Unit'];
+               const unitRaw = row['Margin Value Unit'] as any;
                const unit = (unitRaw ? String(unitRaw) : '').toUpperCase();
                
                if (!fsn) continue;
@@ -444,17 +430,13 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
       if (selectedRequestIds.size === 0) return;
       
       setLoading(true);
-      setProcessingStatus(action === 'APPROVED' ? 'Approving requests...' : 'Rejecting requests...');
-      setProgress(0);
+      setProcessingStatus(action === 'APPROVED' ? 'Processing approvals...' : 'Rejecting requests...');
+      setProgress(50); // Indeterminate busy state
       
       const ids = Array.from(selectedRequestIds);
-      let count = 0;
       
-      for (const id of ids) {
-          await db.resolveDuplicateRequest(id, action, user.id);
-          count++;
-          if (count % 5 === 0) setProgress(Math.round((count / ids.length) * 100));
-      }
+      // Use optimized batch processing method
+      await db.resolveDuplicateRequestsBatch(ids, action, user.id);
       
       await loadRequests();
       await loadUniqueFsns();
@@ -525,7 +507,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   const confirmClearDB = async () => {
     setShowClearModal(false);
     setLoading(true);
-    setProcessingStatus('Archiving active records...');
+    setProcessingStatus('Permanently deleting all active records...');
     setProgress(10);
     
     try {
@@ -539,10 +521,9 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
         clearInterval(interval);
         setProgress(100);
         
-        alert("Database reset. Records archived.");
+        alert("Database reset. Records permanently deleted.");
         setAuditResult(null);
         setRequests([]);
-        loadArchive();
         setAllFsns([]);
         setBulkResults(null);
     } catch (e) {
@@ -634,7 +615,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                 </div>
                 
                 <p className="text-gray-600 mb-4 text-sm leading-relaxed">
-                    This action will <strong>archive all active records</strong> to the Bin and reset the workspace for the new month. This cannot be undone easily.
+                    This action will <strong>permanently delete all active records</strong> and reset the workspace for the new month. This cannot be undone.
                 </p>
                 
                 <label className="block text-xs font-bold text-gray-500 uppercase mb-2">
@@ -1154,47 +1135,6 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                         </button>
                     </div>
                 </div>
-            </div>
-
-            {/* Archive Viewer */}
-            <div className="fk-card p-6 space-y-4">
-                 <div className="flex items-center justify-between">
-                     <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <Archive className="w-5 h-5 text-gray-500" /> Archived Records (Bin)
-                     </h3>
-                     <button onClick={toggleArchive} className="flex items-center gap-2 text-sm text-fkBlue hover:underline transition-colors font-medium">
-                        {showArchive ? 'Hide Archive' : 'View Deleted Records'}
-                        <Clock className="w-3 h-3" />
-                     </button>
-                 </div>
-                 
-                 {showArchive && (
-                     <div className="overflow-auto max-h-80 border border-gray-200 rounded-lg animate-in fade-in">
-                        <table className="w-full text-left text-xs text-gray-600">
-                            <thead className="bg-gray-50 sticky top-0 font-bold text-gray-700 border-b border-gray-200">
-                                <tr>
-                                    <th className="p-3">Deleted At</th>
-                                    <th className="p-3">Deleted By</th>
-                                    <th className="p-3">FSN</th>
-                                    <th className="p-3">City</th>
-                                    <th className="p-3">Reason</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 bg-white">
-                                {archiveData.map((r, i) => (
-                                    <tr key={i} className="hover:bg-gray-50">
-                                        <td className="p-3 font-mono text-gray-500">{new Date(r.deletedAt).toLocaleString()}</td>
-                                        <td className="p-3">{r.deletedBy}</td>
-                                        <td className="p-3 font-medium">{r.fsn}</td>
-                                        <td className="p-3">{r.city}</td>
-                                        <td className="p-3 text-fkYellow font-medium">{r.note || 'Manual Delete/Override'}</td>
-                                    </tr>
-                                ))}
-                                {archiveData.length === 0 && <tr><td colSpan={5} className="p-6 text-center italic text-gray-400">Bin is empty</td></tr>}
-                            </tbody>
-                        </table>
-                     </div>
-                 )}
             </div>
         </div>
       )}

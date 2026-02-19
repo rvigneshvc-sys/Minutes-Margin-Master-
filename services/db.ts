@@ -203,9 +203,6 @@ class DBService {
           localStorage.removeItem(STORAGE_KEYS_LEGACY.RECORDS);
           localStorage.removeItem(STORAGE_KEYS_LEGACY.REQUESTS);
           localStorage.removeItem(STORAGE_KEYS_LEGACY.BIN);
-          // We keep USERS and CITIES keys in LS as backups or remove them? 
-          // Let's remove to ensure single source of truth, but AUTH component might be reading LS in this demo.
-          // Wait, the Auth component in this app calls db.login(), which we will update.
           localStorage.removeItem(STORAGE_KEYS_LEGACY.USERS); 
           localStorage.removeItem(STORAGE_KEYS_LEGACY.CITIES);
           
@@ -299,58 +296,15 @@ class DBService {
   }
 
   async deleteRecord(recordId: string, movedToBinBy: string): Promise<void> {
-      const record = await this.get<CommercialRecord>(STORE_RECORDS, recordId);
-      if (record) {
-          await this.put(STORE_BIN, { ...record, deletedBy: movedToBinBy, deletedAt: Date.now() });
-          await this.delete(STORE_RECORDS, recordId);
-          await this.notifyListeners();
-      }
+      await this.delete(STORE_RECORDS, recordId);
+      await this.notifyListeners();
   }
 
   async deleteRecords(recordIds: string[], movedToBinBy: string): Promise<void> {
-      // PHASE 1: READ - Fetch all records to be deleted
-      // We do this separately to avoid keeping a read-write transaction open during potential read delays
-      const recordsToDelete: CommercialRecord[] = [];
-      const db = await this.getDB();
+      if (recordIds.length === 0) return;
       
-      const readTx = db.transaction(STORE_RECORDS, 'readonly');
-      const readStore = readTx.objectStore(STORE_RECORDS);
-      
-      const readPromises = recordIds.map(id => new Promise<CommercialRecord | undefined>((resolve) => {
-          const req = readStore.get(id);
-          req.onsuccess = () => resolve(req.result);
-          req.onerror = () => resolve(undefined);
-      }));
-
-      const results = await Promise.all(readPromises);
-      results.forEach(r => { if(r) recordsToDelete.push(r); });
-
-      if (recordsToDelete.length === 0) return;
-
-      // PHASE 2: WRITE - Move to Bin and Delete
-      return new Promise((resolve, reject) => {
-          const writeTx = db.transaction([STORE_RECORDS, STORE_BIN], 'readwrite');
-          const recordStore = writeTx.objectStore(STORE_RECORDS);
-          const binStore = writeTx.objectStore(STORE_BIN);
-          const timestamp = Date.now();
-
-          recordsToDelete.forEach(rec => {
-              // 1. Put to Bin
-              binStore.put({ ...rec, deletedBy: movedToBinBy, deletedAt: timestamp });
-              // 2. Delete from Records
-              recordStore.delete(rec.id);
-          });
-
-          writeTx.oncomplete = () => {
-              this.notifyListeners();
-              resolve();
-          };
-
-          writeTx.onerror = (e) => {
-              console.error("Delete Transaction Failed", writeTx.error);
-              reject(writeTx.error);
-          };
-      });
+      await this.bulkDelete(STORE_RECORDS, recordIds);
+      await this.notifyListeners();
   }
 
   async getBinRecords(): Promise<any[]> {
@@ -358,23 +312,13 @@ class DBService {
   }
 
   async clearAllRecords(clearedBy: string): Promise<void> {
-    // 1. Fetch all records to move to bin (Read)
-    const records = await this.getAll<CommercialRecord>(STORE_RECORDS);
-    
-    // 2. Perform writes in a single transaction (Write)
+    // Perform writes in a single transaction (Write)
     const db = await this.getDB();
     
     return new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE_RECORDS, STORE_BIN, STORE_REQUESTS], 'readwrite');
+        const tx = db.transaction([STORE_RECORDS, STORE_REQUESTS], 'readwrite');
         const recordStore = tx.objectStore(STORE_RECORDS);
-        const binStore = tx.objectStore(STORE_BIN);
         const reqStore = tx.objectStore(STORE_REQUESTS);
-        const timestamp = Date.now();
-
-        // Move to Bin
-        records.forEach(r => {
-             binStore.put({ ...r, deletedBy: clearedBy, deletedAt: timestamp, note: 'BATCH_CLEAR_MONTH_END' });
-        });
 
         // Clear Stores
         recordStore.clear();
@@ -441,6 +385,69 @@ class DBService {
             await this.deleteRecords(idsToDelete, resolverId);
         }
         await this.addRecords([newRec]);
+    }
+  }
+
+  async resolveDuplicateRequestsBatch(requestIds: string[], status: 'APPROVED' | 'REJECTED', resolverId: string): Promise<void> {
+    if (requestIds.length === 0) return;
+
+    // 1. Update Requests Status
+    const allRequests = await this.getAll<DuplicateRequest>(STORE_REQUESTS);
+    const targetRequests = allRequests.filter(r => requestIds.includes(r.id));
+    
+    if (targetRequests.length === 0) return;
+
+    const updatedRequests = targetRequests.map(r => ({ ...r, status }));
+    await this.bulkPut(STORE_REQUESTS, updatedRequests);
+
+    // 2. If Approved, process records
+    if (status === 'APPROVED') {
+        const allRecords = await this.getRecords();
+        
+        // Index records by FSN for performance O(N) -> O(1) lookup
+        const recordsByFsn = new Map<string, CommercialRecord[]>();
+        allRecords.forEach(r => {
+            if (!recordsByFsn.has(r.fsn)) recordsByFsn.set(r.fsn, []);
+            recordsByFsn.get(r.fsn)!.push(r);
+        });
+
+        const recordsToDelete = new Set<string>();
+        const recordsToAdd: CommercialRecord[] = [];
+
+        for (const req of targetRequests) {
+            const newRec = req.payload;
+            const candidates = recordsByFsn.get(newRec.fsn) || [];
+            
+            const isInvoice = newRec.type === CommercialType.ON_INVOICE || newRec.type === CommercialType.OFF_INVOICE;
+
+            candidates.forEach(existing => {
+                if (existing.city !== newRec.city) return;
+                if (existing.type !== newRec.type) return;
+
+                let isConflict = false;
+                if (isInvoice) {
+                    if (existing.startDate === newRec.startDate && existing.endDate === newRec.endDate) isConflict = true;
+                } else {
+                    // Overlap check
+                    if (newRec.startDate <= existing.endDate && newRec.endDate >= existing.startDate) isConflict = true;
+                }
+
+                if (isConflict) {
+                    recordsToDelete.add(existing.id);
+                }
+            });
+
+            recordsToAdd.push(newRec);
+        }
+
+        if (recordsToDelete.size > 0) {
+            await this.bulkDelete(STORE_RECORDS, Array.from(recordsToDelete));
+        }
+        if (recordsToAdd.length > 0) {
+            await this.bulkPut(STORE_RECORDS, recordsToAdd);
+        }
+        
+        await this.notifyListeners();
     }
   }
 }
