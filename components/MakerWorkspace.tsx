@@ -225,7 +225,9 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
         return;
     }
 
-    if (formData.type !== CommercialType.MARGIN_PERCENT && formData.endDate! < formData.startDate!) {
+    const needsDateValidation = formData.type !== CommercialType.MARGIN_PERCENT;
+
+    if (needsDateValidation && formData.endDate! < formData.startDate!) {
         setNotification({ msg: 'End Date cannot be before Start Date', type: 'error' });
         return;
     }
@@ -354,6 +356,36 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
             try {
                 const headers = results.meta.fields || [];
                 
+                // Special handling for Cost Mapping 
+                if (bulkType === CommercialType.SCM_PROCESSING_COST) {
+                    setProcessingStatus('Updating Cost Mapping...');
+                    const currentMapping = await db.getCostMapping();
+                    let updatedCount = 0;
+                    for (const row of results.data as any[]) {
+                        const rowKeys = Object.keys(row);
+                        const cityKey = rowKeys.find(k => k.toLowerCase().includes('city'));
+                        const pCostKey = rowKeys.find(k => k.toLowerCase().includes('processing'));
+                        const sCostKey = rowKeys.find(k => k.toLowerCase().includes('scm') && k.toLowerCase().includes('cost'));
+                        
+                        const city = cityKey ? String(row[cityKey]).toUpperCase().trim() : '';
+                        const pCost = parseFloat(pCostKey ? row[pCostKey] : '0');
+                        const sCost = parseFloat(sCostKey ? row[sCostKey] : '0');
+                        
+                        if (city && city.length >= 2) {
+                            if (!currentMapping[city]) currentMapping[city] = { processingCost: 0, scmCost: 0 };
+                            if (!isNaN(pCost) && pCost > 0) currentMapping[city].processingCost = pCost;
+                            if (!isNaN(sCost) && sCost > 0) currentMapping[city].scmCost = sCost;
+                            updatedCount++;
+                        }
+                    }
+                    await db.updateCostMapping(currentMapping);
+                    setNotification({ msg: `Cost Mapping updated successfully! (${updatedCount} city configurations updated)`, type: 'success' });
+                    setLoading(false); setProgress(0); setEta(null);
+                    setProcessingStatus('');
+                    e.target.value = '';
+                    return;
+                }
+
                 // Smart Header Mapping
                 const headerMap: {[key: string]: string} = {};
                 headers.forEach(h => {
@@ -700,13 +732,31 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
   };
 
   const downloadTemplate = () => {
+    if (bulkType === CommercialType.SCM_PROCESSING_COST) {
+        const headers = ['City', 'Milk Tag', 'Processing Cost', 'SCM Cost'];
+        const dummyRows = [
+            ['DEL', 'Milk', '0.8', '1.9'],
+            ['DEL', 'Non Milk', '0', '1.9'],
+            ['KOL', 'Non Milk', '0', '1.65']
+        ];
+        const csvContent = [headers.join(','), ...dummyRows.map(row => row.join(','))].join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `template_CityCosts.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        return;
+    }
+
     // Dynamically Add 'Unit' column to template if it's NLC type to guide user
     const extraCols = [];
     if (bulkType === CommercialType.NLC_VALUE || bulkType === CommercialType.NLC_PERCENT) {
         extraCols.push('Unit');
     }
 
-    // Dates are not required for Margin % as per business logic (defaults used)
+    // Dates are not required for Margin %
     const includeDates = bulkType !== CommercialType.MARGIN_PERCENT;
 
     const baseHeaders = ['FSN', 'Brand', 'Title', 'Vertical', 'KAM'];
@@ -716,7 +766,10 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
 
     const headers = [...baseHeaders, ...extraCols, ...cities];
     const isNLC = bulkType === CommercialType.NLC_VALUE;
-    const exampleVal = isNLC ? '50000' : '10';
+    
+    let exampleVal = '10';
+    if (isNLC) exampleVal = '50000';
+    
     const exampleUnit = isNLC ? 'Value' : 'Percent';
 
     const baseRow = ['MOBEXAMPLE123456', 'BrandX', 'Sample Product 1', 'Mobiles', 'John Doe'];

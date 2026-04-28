@@ -9,8 +9,28 @@ export enum CommercialType {
   NLC_VALUE = 'NLC Value',
   NLC_PERCENT = 'NLC %',
   ON_INVOICE = 'On Invoice %',
-  OFF_INVOICE = 'Off Invoice %'
+  OFF_INVOICE = 'Off Invoice %',
+  SCM_PROCESSING_COST = 'SCM / Processing Cost'
 }
+
+export const DEFAULT_COST_MAPPING: Record<string, { processingCost: number, scmCost: number }> = {
+  'KOL': { processingCost: 0, scmCost: 1.65 },
+  'CHA': { processingCost: 0, scmCost: 1.75 },
+  'HYD': { processingCost: 0, scmCost: 1.7 },
+  'DEL': { processingCost: 0.8, scmCost: 1.9 },
+  'GUW': { processingCost: 0, scmCost: 1.84 },
+  'PAT': { processingCost: 0, scmCost: 1.7 },
+  'RBI': { processingCost: 0, scmCost: 1.7 },
+  'PUN': { processingCost: 0, scmCost: 0 },
+  'MUM': { processingCost: 0, scmCost: 0 },
+  'ROM': { processingCost: 0, scmCost: 0 },
+  'BHU': { processingCost: 0, scmCost: 1.7 },
+  'ROO': { processingCost: 0, scmCost: 1.7 },
+  'RAN': { processingCost: 0, scmCost: 1.7 },
+  'JAM': { processingCost: 0, scmCost: 1.7 },
+  'RJH': { processingCost: 0, scmCost: 1.7 },
+  'RWB': { processingCost: 0, scmCost: 1.65 },
+};
 
 export interface User {
   id: string;
@@ -55,5 +75,6 @@ export const COMMERCIAL_TYPES = [
   CommercialType.NLC_VALUE,
   CommercialType.NLC_PERCENT,
   CommercialType.ON_INVOICE,
-  CommercialType.OFF_INVOICE
+  CommercialType.OFF_INVOICE,
+  CommercialType.SCM_PROCESSING_COST
 ];

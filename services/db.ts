@@ -1,4 +1,4 @@
-import { CommercialRecord, DuplicateRequest, User, Role, CommercialType, CITIES as DEFAULT_CITIES } from '../types';
+import { CommercialRecord, DuplicateRequest, User, Role, CommercialType, CITIES as DEFAULT_CITIES, DEFAULT_COST_MAPPING } from '../types';
 
 const DB_NAME = 'MinutesMasterDB';
 const DB_VERSION = 1;
@@ -254,6 +254,18 @@ class DBService {
   }
 
   // Cities
+  async getCostMapping(): Promise<Record<string, { processingCost: number, scmCost: number }>> {
+    const config = await this.get<{key: string, value: any}>(STORE_CONFIG, 'cost_mapping');
+    // We import DEFAULT_COST_MAPPING from types.ts, so assuming the file has access to it.
+    // Wait, I need to import DEFAULT_COST_MAPPING from '../types' at the top. Let's just use it here and check imports later.
+    return config ? config.value : DEFAULT_COST_MAPPING;
+  }
+
+  async updateCostMapping(mapping: Record<string, { processingCost: number, scmCost: number }>): Promise<void> {
+    await this.put(STORE_CONFIG, { key: 'cost_mapping', value: mapping });
+    // Maybe notify listeners? Currently we don't have cost listeners.
+  }
+
   async getCities(): Promise<string[]> {
     const config = await this.get<{key: string, value: string[]}>(STORE_CONFIG, 'cities');
     return config ? config.value : DEFAULT_CITIES;

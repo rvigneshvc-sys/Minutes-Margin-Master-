@@ -13,6 +13,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   const [activeTab, setActiveTab] = useState<'AUDIT' | 'APPROVALS' | 'CLOSURE'>('AUDIT');
   const [requests, setRequests] = useState<DuplicateRequest[]>([]);
   const [cities, setCities] = useState<string[]>([]);
+  const [costMapping, setCostMapping] = useState<Record<string, { processingCost: number, scmCost: number }>>({});
   
   // Selection State for Approvals
   const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
@@ -84,6 +85,8 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
 
   const loadCities = async () => {
     const c = await db.getCities();
+    const cm = await db.getCostMapping();
+    setCostMapping(cm);
     setCities(c);
     if (!c.includes(auditQuery.city)) {
        setAuditQuery(prev => ({ ...prev, city: c.includes('BLR') ? 'BLR' : c[0] || '' }));
@@ -148,12 +151,25 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
     let onInvVal = 0;
     let onInvSource = '-';
     let systemTotal = 0;
+    let extraCost = 0;
+    let extraCostLabel = '';
 
     const getRec = (type: CommercialType) => 
         activeRecords.find(r => r.type === type && r.city === auditQuery.city) ||
         activeRecords.find(r => r.type === type && r.city === 'PAN-INDIA');
 
     if (auditQuery.unit === 'PERCENT') {
+        // Look up extra cost based on vertical string (milk vs non-milk)
+        const sampleRecord = activeRecords[0];
+        if (sampleRecord) {
+            const isMilk = sampleRecord.vertical && sampleRecord.vertical.toLowerCase() === 'milk';
+            const mapping = costMapping[auditQuery.city];
+            if (mapping) {
+                extraCost = isMilk ? mapping.processingCost : mapping.scmCost;
+                extraCostLabel = isMilk ? 'Processing Cost' : 'SCM Cost';
+            }
+        }
+
         // Logic: Margin % > NLC %
         const marginRec = getRec(CommercialType.MARGIN_PERCENT);
         if (marginRec) {
@@ -174,7 +190,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
             onInvSource = onRec.city === 'PAN-INDIA' ? 'PAN' : 'City';
         }
 
-        systemTotal = baseVal + onInvVal;
+        systemTotal = baseVal + onInvVal + extraCost;
     } else {
         // Logic: NLC Value (Amount)
         const nlcValRec = getRec(CommercialType.NLC_VALUE);
@@ -198,7 +214,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
 
     setAuditResult({
       data: [
-        { name: 'System', base: baseVal, onInv: auditQuery.unit === 'PERCENT' ? onInvVal : 0, total: systemTotal },
+        { name: 'System', base: baseVal, onInv: auditQuery.unit === 'PERCENT' ? onInvVal : 0, extra: extraCost, total: systemTotal },
         { name: 'Target', target: auditQuery.targetMargin }
       ],
       systemTotal,
@@ -209,7 +225,9 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
       details: activeRecords,
       baseType,
       onInvVal,
-      onInvSource
+      onInvSource,
+      extraCost,
+      extraCostLabel
     });
     setLoading(false);
     setProgress(100);
@@ -324,12 +342,24 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                let baseType = '-';
                let onInvVal = 0;
                let onInvSource = '-';
+               let extraCost = 0;
+               let extraCostLabel = '';
                
                const getRec = (type: CommercialType) => 
                      activeRecords.find(r => r.type === type && r.city === bulkAuditCity) ||
                      activeRecords.find(r => r.type === type && r.city === 'PAN-INDIA');
 
                if (unit.includes('PERCENT')) {
+                  const sampleRecord = activeRecords[0];
+                  if (sampleRecord) {
+                      const isMilk = sampleRecord.vertical && sampleRecord.vertical.toLowerCase() === 'milk';
+                      const mapping = costMapping[bulkAuditCity];
+                      if (mapping) {
+                          extraCost = isMilk ? mapping.processingCost : mapping.scmCost;
+                          extraCostLabel = isMilk ? 'Processing Cost' : 'SCM Cost';
+                      }
+                  }
+
                   const marginRec = getRec(CommercialType.MARGIN_PERCENT);
                   if (marginRec) {
                       baseVal = marginRec.value;
@@ -359,7 +389,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                let variance = 0;
 
                if (unit.includes('PERCENT')) {
-                   systemTotal = baseVal + onInvVal;
+                   systemTotal = baseVal + onInvVal + extraCost;
                    variance = targetVal - systemTotal;
                } else {
                    systemTotal = baseVal;
@@ -378,6 +408,8 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                    baseType,
                    onInvVal,
                    onInvSource,
+                   extraCost,
+                   extraCostLabel,
                    systemTotal,
                    variance,
                    status
@@ -558,6 +590,9 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                    <div className="flex justify-between"><span>Base ({auditResult.baseType}):</span> <span>{auditResult.data[0].base}</span></div>
                    {auditQuery.unit === 'PERCENT' && (
                        <div className="flex justify-between"><span>On Inv %:</span> <span>{auditResult.onInvVal}</span></div>
+                   )}
+                   {auditQuery.unit === 'PERCENT' && auditResult.extraCost > 0 && (
+                       <div className="flex justify-between"><span>{auditResult.extraCostLabel}:</span> <span>{auditResult.extraCost}</span></div>
                    )}
                    {auditResult.onInvSource === 'PAN' && <div className="text-gray-400 italic text-[9px]">* On Inv from PAN-INDIA</div>}
               </div>
@@ -781,7 +816,8 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                     </div>
                     {auditResult.baseType && (
                         <div className="mt-3 bg-white/50 p-2 rounded text-[10px] text-gray-600 border border-gray-100">
-                            <strong>Calculation Logic:</strong> {auditResult.baseType} + On Inv %
+                            <strong>Calculation Logic:</strong> {auditResult.baseType} + On Inv % 
+                            {auditResult.extraCost > 0 ? ` + ${auditResult.extraCostLabel}` : ''}
                         </div>
                     )}
                   </div>
@@ -799,12 +835,17 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                             <Tooltip content={<CustomTooltip />} cursor={{fill: '#f5f5f5'}} />
                             <Legend wrapperStyle={{ paddingTop: '20px' }} />
                             
-                            <Bar dataKey="base" stackId="system" name={auditResult.baseType} fill="#2874f0" radius={[0, 0, 4, 4]}>
+                            <Bar dataKey="base" stackId="system" name={auditResult.baseType} fill="#2874f0" radius={auditQuery.unit === 'PERCENT' ? [0, 0, 4, 4] : [4, 4, 4, 4]}>
                               <LabelList dataKey="base" position="center" className="fill-white font-bold text-[10px]" formatter={(v: number) => v > 0 ? v.toFixed(0) : ''} />
                             </Bar>
                             {auditQuery.unit === 'PERCENT' && (
-                                <Bar dataKey="onInv" stackId="system" name="On Invoice %" fill="#8b5cf6" radius={[4, 4, 0, 0]}>
+                                <Bar dataKey="onInv" stackId="system" name="On Invoice %" fill="#8b5cf6" radius={auditResult.extraCost > 0 ? [0, 0, 0, 0] : [4, 4, 0, 0]}>
                                   <LabelList dataKey="onInv" position="center" className="fill-white font-bold text-[10px]" formatter={(v: number) => v > 0 ? v.toFixed(0) : ''} />
+                                </Bar>
+                            )}
+                            {auditQuery.unit === 'PERCENT' && auditResult.extraCost > 0 && (
+                                <Bar dataKey="extra" stackId="system" name={auditResult.extraCostLabel} fill="#0ea5e9" radius={[4, 4, 0, 0]}>
+                                  <LabelList dataKey="extra" position="center" className="fill-white font-bold text-[10px]" formatter={(v: number) => v > 0 ? v.toFixed(1) : ''} />
                                 </Bar>
                             )}
                             
@@ -888,6 +929,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                                             <th className="p-3 text-right">Target</th>
                                             <th className="p-3 text-right">System Base</th>
                                             <th className="p-3 text-right">On Inv %</th>
+                                            <th className="p-3 text-right">Extra Cost</th>
                                             <th className="p-3 text-right">Total</th>
                                             <th className="p-3 text-right">Var</th>
                                             <th className="p-3 text-center">Status</th>
@@ -911,6 +953,14 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                                                 <td className="p-3 text-right">
                                                     {res.onInvVal > 0 ? (
                                                         <span className="text-purple-600 font-bold">{res.onInvVal}%</span>
+                                                    ) : '-'}
+                                                </td>
+                                                <td className="p-3 text-right">
+                                                    {res.extraCost > 0 ? (
+                                                        <div className="flex flex-col items-end">
+                                                            <span className="text-blue-600 font-bold">{res.extraCost}</span>
+                                                            <span className="text-[9px] text-gray-400">{res.extraCostLabel}</span>
+                                                        </div>
                                                     ) : '-'}
                                                 </td>
                                                 <td className="p-3 text-right font-bold text-gray-800">

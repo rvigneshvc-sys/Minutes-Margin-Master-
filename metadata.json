@@ -1,5 +1,6 @@
 {
   "name": "Minutes Master",
   "description": "Enterprise-grade Maker-Checker application for commercial operations management with offline support and advanced auditing.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
