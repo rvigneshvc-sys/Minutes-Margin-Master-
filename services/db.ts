@@ -422,7 +422,6 @@ class DBService {
             const r = allRecords[i];
             if (!recordsByFsn.has(r.fsn)) recordsByFsn.set(r.fsn, []);
             recordsByFsn.get(r.fsn)!.push(r);
-            if (i % 500 === 0) await new Promise(resolve => setTimeout(resolve, 0));
         }
 
         const recordsToDelete = new Set<string>();
@@ -453,23 +452,13 @@ class DBService {
             });
 
             recordsToAdd.push(newRec);
-            
-            if (i % 50 === 0 && i !== 0) {
-               await new Promise(resolve => setTimeout(resolve, 0));
-            }
         }
 
         if (recordsToDelete.size > 0) {
-            // Chunk delete to avoid breaking IndexedDB transactions maximums
-            const toDeleteArray = Array.from(recordsToDelete);
-            for (let i = 0; i < toDeleteArray.length; i += 500) {
-                await this.bulkDelete(STORE_RECORDS, toDeleteArray.slice(i, i + 500));
-            }
+            await this.bulkDelete(STORE_RECORDS, Array.from(recordsToDelete));
         }
         if (recordsToAdd.length > 0) {
-            for (let i = 0; i < recordsToAdd.length; i += 500) {
-                await this.bulkPut(STORE_RECORDS, recordsToAdd.slice(i, i + 500));
-            }
+            await this.bulkPut(STORE_RECORDS, recordsToAdd);
         }
         
         await this.notifyListeners();
