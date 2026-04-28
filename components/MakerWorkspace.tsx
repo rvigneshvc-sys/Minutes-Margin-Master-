@@ -225,6 +225,11 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
         return;
     }
 
+    if (formData.type === CommercialType.MARGIN_PERCENT && Number(formData.value) === 0) {
+        setNotification({ msg: 'Margin % value of 0 is considered blank and cannot be submitted.', type: 'error' });
+        return;
+    }
+
     const needsDateValidation = formData.type !== CommercialType.MARGIN_PERCENT;
 
     if (needsDateValidation && formData.endDate! < formData.startDate!) {
@@ -547,6 +552,10 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
 
                             let val = parseFloat(row[key]);
                             if (isNaN(val)) return;
+
+                            if (bulkType === CommercialType.MARGIN_PERCENT && val === 0) {
+                                return;
+                            }
 
                             // Track max value for heuristic check
                             if (val > maxRecordValue) maxRecordValue = val;
