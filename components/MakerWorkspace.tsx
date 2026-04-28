@@ -255,13 +255,8 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
         lastUpdatedAt: Date.now()
       };
 
-      if (isConflict || isHighMargin) {
-        let reason = '';
-        if (isConflict) {
-            const isInvoice = formData.type === CommercialType.ON_INVOICE || formData.type === CommercialType.OFF_INVOICE;
-            reason = isInvoice ? 'Exact Duplicate Conflict' : 'Duplicate/Overlap Conflict';
-        }
-        if (isHighMargin) reason = reason ? reason + ' & High Margin (>60%)' : 'High Margin (>60%)';
+      if (isHighMargin) {
+        let reason = 'High Margin (>60%)';
 
         const req: DuplicateRequest = {
           id: `req_${Date.now()}`,
@@ -275,8 +270,8 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
         await db.createDuplicateRequest(req);
         setNotification({ msg: `Request sent to Checker: ${reason}`, type: 'warning' });
       } else {
-        await db.addRecords([newRecord]);
-        setNotification({ msg: 'Record saved successfully.', type: 'success' });
+        await db.upsertRecords([newRecord]);
+        setNotification({ msg: isConflict ? 'Record overwritten within old entries.' : 'Record saved successfully.', type: 'success' });
         setFormData(prev => ({ 
             ...prev, 
             fsn: '', 
@@ -442,7 +437,6 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
 
                 // 3. Prepare Data for Optimized Batch Processing
                 const newRecords: CommercialRecord[] = [];
-                const conflictRequests: DuplicateRequest[] = [];
                 const highMarginRequests: DuplicateRequest[] = [];
                 
                 setProcessingStatus('Indexing Database...');
@@ -588,32 +582,10 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                             const dbCandidates = dbIndex.get(rec.fsn) || [];
                             const batchCandidates = batchIndex.get(rec.fsn) || [];
                             
-                            // We only check against candidates with same FSN, reducing complexity from O(TotalRecords) to O(1)
-                            const isConflict = checkForConflict(dbCandidates, rec) || checkForConflict(batchCandidates, rec);
-                            // IMPORTANT: High Margin logic is separated from duplicates if it's NOT a conflict
                             const isHighMargin = bulkType === CommercialType.MARGIN_PERCENT && val > 60;
 
-                            if (isConflict) {
-                                let reason = '';
-                                const isInvoice = bulkType === CommercialType.ON_INVOICE || bulkType === CommercialType.OFF_INVOICE;
-                                reason = isInvoice ? 'Exact Duplicate' : 'Duplicate/Overlap';
-                                
-                                // It's a duplicate, we track it for the modal choice
-                                // We can also note if it was high margin in the reason
-                                if (isHighMargin) reason += ' & High Margin';
-
-                                const req: DuplicateRequest = {
-                                    id: `req_${Math.random().toString(36).substr(2,9)}_${Math.random()}`,
-                                    originalRecordId: null,
-                                    payload: rec,
-                                    requestedBy: user.name,
-                                    requestedAt: Date.now(),
-                                    status: 'PENDING',
-                                    reason: reason
-                                };
-                                conflictRequests.push(req);
-                            } else if (isHighMargin) {
-                                // High Margin but NOT a conflict. Directly send for approval.
+                            if (isHighMargin) {
+                                // High Margin. Directly send for approval.
                                 const req: DuplicateRequest = {
                                     id: `req_${Math.random().toString(36).substr(2,9)}_${Math.random()}`,
                                     originalRecordId: null,
@@ -654,12 +626,12 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                 setProcessingStatus('Finalizing Database...');
                 setProgress(98);
 
-                // 1. Add Valid Records
+                // 1. Upsert Valid Records
                 if (newRecords.length > 0) {
-                await db.addRecords(newRecords);
+                   await db.upsertRecords(newRecords);
                 }
 
-                // 2. Auto-send High Margin (No Conflict) requests
+                // 2. Auto-send High Margin requests
                 if (highMarginRequests.length > 0) {
                     await db.createDuplicateRequests(highMarginRequests);
                 }
@@ -672,28 +644,15 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
                     highMarginSent: highMarginRequests.length
                 };
 
-                // 3. Handle Duplicates (Conflicting requests)
-                if (conflictRequests.length > 2) {
-                    setPendingRequests(conflictRequests);
-                    setCompletedUploadStats(stats);
-                    setShowApprovalModal(true);
-                    setLoading(false); 
-                    setProgress(100);
-                } else {
-                    if (conflictRequests.length > 0) {
-                        await db.createDuplicateRequests(conflictRequests);
-                    }
-                    
-                    const totalSent = highMarginRequests.length + conflictRequests.length;
-                    showUploadNotification(stats, totalSent);
-                    
-                    setProgress(100);
-                    setTimeout(() => {
-                        setLoading(false);
-                        setProgress(0);
-                        setEta(null);
-                    }, 500);
-                }
+                const totalSent = highMarginRequests.length;
+                showUploadNotification(stats, totalSent);
+                
+                setProgress(100);
+                setTimeout(() => {
+                    setLoading(false);
+                    setProgress(0);
+                    setEta(null);
+                }, 500);
             } catch (err: any) {
                 if (err.message === "Cancelled by user") {
                     setNotification({ msg: 'Upload processing cancelled.', type: 'warning' });
@@ -923,14 +882,12 @@ export const MakerWorkspace: React.FC<MakerProps> = ({ user }) => {
       {/* Alerts */}
       <div className="space-y-2">
           {instantConflict && activeTab === 'MANUAL' && (
-            <div className="p-3 bg-red-50 border-l-4 border-red-500 rounded shadow-sm flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
-                <ShieldAlert className="text-red-500 w-6 h-6" />
+            <div className="p-3 bg-blue-50 border-l-4 border-fkBlue rounded shadow-sm flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                <ShieldAlert className="text-fkBlue w-6 h-6" />
                 <div>
-                    <p className="font-bold text-gray-800 text-sm">Conflict Detected!</p>
+                    <p className="font-bold text-gray-800 text-sm">Existing Record Found</p>
                     <p className="text-xs text-gray-600">
-                        {(formData.type === CommercialType.ON_INVOICE || formData.type === CommercialType.OFF_INVOICE) 
-                         ? 'Exact duplicate date range exists. Saving triggers approval.' 
-                         : 'Overlap with existing record. Saving triggers approval.'}
+                        Saving this entry will rewrite and overwrite the existing record(s) for this FSN.
                     </p>
                 </div>
             </div>

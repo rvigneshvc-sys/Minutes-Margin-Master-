@@ -18,6 +18,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   // Selection State for Approvals
   const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set());
   const [approvalSearchTerm, setApprovalSearchTerm] = useState('');
+  const [approvalReasonFilter, setApprovalReasonFilter] = useState('');
   
   // Audit State (Single)
   const [auditMode, setAuditMode] = useState<'SINGLE' | 'BULK'>('SINGLE');
@@ -79,15 +80,26 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
     let result = requests;
     if (approvalSearchTerm.trim()) {
         const lowerTerm = approvalSearchTerm.toLowerCase();
-        result = requests.filter(req => 
+        result = result.filter(req => 
           req.payload.fsn.toLowerCase().includes(lowerTerm) ||
           req.payload.title.toLowerCase().includes(lowerTerm) ||
           req.requestedBy.toLowerCase().includes(lowerTerm) ||
           (req.payload.kam && req.payload.kam.toLowerCase().includes(lowerTerm))
         );
     }
+    if (approvalReasonFilter) {
+        result = result.filter(req => req.reason === approvalReasonFilter);
+    }
     return result;
-  }, [requests, approvalSearchTerm]);
+  }, [requests, approvalSearchTerm, approvalReasonFilter]);
+
+  const availableReasons = useMemo(() => {
+    const reasons = new Set<string>();
+    requests.forEach(req => {
+        if (req.reason) reasons.add(req.reason);
+    });
+    return Array.from(reasons).sort();
+  }, [requests]);
 
   const paginatedRequests = useMemo(() => {
       return filteredRequests.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -98,7 +110,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   // Reset page when search changes
   useEffect(() => {
       setCurrentPage(1);
-  }, [approvalSearchTerm]);
+  }, [approvalSearchTerm, approvalReasonFilter]);
 
   const loadCities = async () => {
     const c = await db.getCities();
@@ -1028,19 +1040,33 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
       {activeTab === 'APPROVALS' && (
         <div id="tour-checker-approvals" className="space-y-4">
            {requests.length > 0 && (
-               <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm flex items-center gap-2 mb-4">
-                    <Search className="w-5 h-5 text-gray-400" />
-                    <input 
-                        className="flex-1 bg-transparent outline-none text-sm text-gray-700 placeholder-gray-400"
-                        placeholder="Search by FSN, Title, KAM, or User..."
-                        value={approvalSearchTerm}
-                        onChange={(e) => setApprovalSearchTerm(e.target.value)}
-                    />
-                    {approvalSearchTerm && (
-                        <button onClick={() => setApprovalSearchTerm('')} className="text-gray-400 hover:text-gray-600">
-                            <X className="w-4 h-4" />
-                        </button>
-                    )}
+               <div className="flex flex-col sm:flex-row gap-4 mb-4">
+                   <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm flex items-center gap-2 flex-1">
+                        <Search className="w-5 h-5 text-gray-400" />
+                        <input 
+                            className="flex-1 bg-transparent outline-none text-sm text-gray-700 placeholder-gray-400"
+                            placeholder="Search by FSN, Title, KAM, or User..."
+                            value={approvalSearchTerm}
+                            onChange={(e) => setApprovalSearchTerm(e.target.value)}
+                        />
+                        {approvalSearchTerm && (
+                            <button onClick={() => setApprovalSearchTerm('')} className="text-gray-400 hover:text-gray-600">
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                   </div>
+                   {availableReasons.length > 0 && (
+                       <select
+                           className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 text-sm text-gray-700 outline-none focus:border-fkBlue w-full sm:w-64"
+                           value={approvalReasonFilter}
+                           onChange={(e) => setApprovalReasonFilter(e.target.value)}
+                       >
+                           <option value="">All Reasons</option>
+                           {availableReasons.map(r => (
+                               <option key={r} value={r}>{r}</option>
+                           ))}
+                       </select>
+                   )}
                </div>
            )}
 
@@ -1084,7 +1110,7 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
           ) : filteredRequests.length === 0 ? (
              <div className="text-center py-20 bg-white rounded-lg border border-gray-200">
                 <Search className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                <p className="text-gray-500 font-medium">No requests match "{approvalSearchTerm}".</p>
+                <p className="text-gray-500 font-medium">No requests match your current filters.</p>
              </div>
           ) : (
             <>

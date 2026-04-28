@@ -307,6 +307,53 @@ class DBService {
     await this.notifyListeners();
   }
 
+  async upsertRecords(newRecords: CommercialRecord[]): Promise<void> {
+    if (newRecords.length === 0) return;
+    const allRecords = await this.getRecords();
+    
+    // Index records by FSN
+    const recordsByFsn = new Map<string, CommercialRecord[]>();
+    for (let i = 0; i < allRecords.length; i++) {
+        const r = allRecords[i];
+        if (!recordsByFsn.has(r.fsn)) recordsByFsn.set(r.fsn, []);
+        recordsByFsn.get(r.fsn)!.push(r);
+    }
+
+    const recordsToDelete = new Set<string>();
+
+    for (let i = 0; i < newRecords.length; i++) {
+        const newRec = newRecords[i];
+        const candidates = recordsByFsn.get(newRec.fsn) || [];
+        const isInvoice = newRec.type === CommercialType.ON_INVOICE || newRec.type === CommercialType.OFF_INVOICE;
+
+        candidates.forEach(existing => {
+            if (existing.city !== newRec.city) return;
+            if (existing.type !== newRec.type) return;
+
+            let isConflict = false;
+            // More aggressive rewrite: If it's the exact same FSN, City, and Type, we consider it a rewrite target.
+            // But let's keep overlap logic to be safe, or maybe exact FSN+City+Type always rewrites?
+            // "any input made in maker against a existing FSN it should be rewrite within the old entries"
+            // We should rewrite the old entry for that city/type.
+            if (isInvoice) {
+                if (existing.startDate === newRec.startDate && existing.endDate === newRec.endDate) isConflict = true;
+            } else {
+                if (newRec.startDate <= existing.endDate && newRec.endDate >= existing.startDate) isConflict = true;
+            }
+
+            if (isConflict) {
+                recordsToDelete.add(existing.id);
+            }
+        });
+    }
+
+    if (recordsToDelete.size > 0) {
+        await this.bulkDelete(STORE_RECORDS, Array.from(recordsToDelete));
+    }
+    await this.bulkPut(STORE_RECORDS, newRecords);
+    await this.notifyListeners();
+  }
+
   async deleteRecord(recordId: string, movedToBinBy: string): Promise<void> {
       await this.delete(STORE_RECORDS, recordId);
       await this.notifyListeners();
