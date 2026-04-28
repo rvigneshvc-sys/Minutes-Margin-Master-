@@ -58,6 +58,9 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
     return () => clearInterval(interval);
   }, []);
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
+
   // Sync selection with requests list (cleanup ghosts)
   useEffect(() => {
       const currentIds = new Set(requests.map(r => r.id));
@@ -73,15 +76,29 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
   }, [requests]);
 
   const filteredRequests = useMemo(() => {
-    if (!approvalSearchTerm.trim()) return requests;
-    const lowerTerm = approvalSearchTerm.toLowerCase();
-    return requests.filter(req => 
-      req.payload.fsn.toLowerCase().includes(lowerTerm) ||
-      req.payload.title.toLowerCase().includes(lowerTerm) ||
-      req.requestedBy.toLowerCase().includes(lowerTerm) ||
-      (req.payload.kam && req.payload.kam.toLowerCase().includes(lowerTerm))
-    );
+    let result = requests;
+    if (approvalSearchTerm.trim()) {
+        const lowerTerm = approvalSearchTerm.toLowerCase();
+        result = requests.filter(req => 
+          req.payload.fsn.toLowerCase().includes(lowerTerm) ||
+          req.payload.title.toLowerCase().includes(lowerTerm) ||
+          req.requestedBy.toLowerCase().includes(lowerTerm) ||
+          (req.payload.kam && req.payload.kam.toLowerCase().includes(lowerTerm))
+        );
+    }
+    return result;
   }, [requests, approvalSearchTerm]);
+
+  const paginatedRequests = useMemo(() => {
+      return filteredRequests.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  }, [filteredRequests, currentPage]);
+
+  const totalPages = Math.ceil(filteredRequests.length / PAGE_SIZE);
+
+  // Reset page when search changes
+  useEffect(() => {
+      setCurrentPage(1);
+  }, [approvalSearchTerm]);
 
   const loadCities = async () => {
     const c = await db.getCities();
@@ -101,7 +118,18 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
 
   const loadRequests = async () => {
     const reqs = await db.getDuplicateRequests();
-    setRequests(reqs.filter(r => r.status === 'PENDING'));
+    const newPending = reqs.filter(r => r.status === 'PENDING');
+    
+    setRequests(prev => {
+        if (prev.length !== newPending.length) return newPending;
+        // Simple heuristic check: if lengths map and first/last match, skip update to prevent massive DOM re-renders every 5s
+        if (prev.length > 0 && 
+            prev[0].id === newPending[0].id && 
+            prev[prev.length - 1].id === newPending[newPending.length - 1].id) {
+            return prev;
+        }
+        return newPending;
+    });
   };
 
   const handleFsnChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -464,6 +492,9 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
       setLoading(true);
       setProcessingStatus(action === 'APPROVED' ? 'Processing approvals...' : 'Rejecting requests...');
       setProgress(50); // Indeterminate busy state
+      
+      // Yield to main thread so UI updates before heavy processing
+      await new Promise(r => setTimeout(r, 50));
       
       const ids = Array.from(selectedRequestIds);
       
@@ -1056,7 +1087,8 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                 <p className="text-gray-500 font-medium">No requests match "{approvalSearchTerm}".</p>
              </div>
           ) : (
-            filteredRequests.map(req => (
+            <>
+            {paginatedRequests.map(req => (
               <div key={req.id} className={`fk-card p-5 flex flex-col md:flex-row gap-4 border-l-4 border-l-fkYellow transition-colors ${selectedRequestIds.has(req.id) ? 'bg-blue-50/30' : ''}`}>
                 <div className="flex items-start gap-4 flex-1">
                      <input 
@@ -1103,7 +1135,31 @@ export const CheckerWorkspace: React.FC<CheckerProps> = ({ user }) => {
                   </button>
                 </div>
               </div>
-            ))
+            ))}
+            
+            <div className="flex items-center justify-between mt-4 p-4 bg-white rounded border border-gray-200 shadow-sm">
+                <span className="text-sm text-gray-600">
+                    Showing {(currentPage - 1) * PAGE_SIZE + 1} to {Math.min(currentPage * PAGE_SIZE, filteredRequests.length)} of {filteredRequests.length} requests
+                </span>
+                <div className="flex gap-2">
+                    <button 
+                        disabled={currentPage === 1}
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        className="px-4 py-2 border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition"
+                    >
+                        Previous
+                    </button>
+                    <div className="px-4 py-2 text-gray-700 font-medium">Page {currentPage} of {totalPages}</div>
+                    <button 
+                        disabled={currentPage === totalPages}
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        className="px-4 py-2 border border-gray-300 rounded bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition"
+                    >
+                        Next
+                    </button>
+                </div>
+            </div>
+            </>
           )}
         </div>
       )}

@@ -418,15 +418,18 @@ class DBService {
         
         // Index records by FSN for performance O(N) -> O(1) lookup
         const recordsByFsn = new Map<string, CommercialRecord[]>();
-        allRecords.forEach(r => {
+        for (let i = 0; i < allRecords.length; i++) {
+            const r = allRecords[i];
             if (!recordsByFsn.has(r.fsn)) recordsByFsn.set(r.fsn, []);
             recordsByFsn.get(r.fsn)!.push(r);
-        });
+            if (i % 500 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+        }
 
         const recordsToDelete = new Set<string>();
         const recordsToAdd: CommercialRecord[] = [];
 
-        for (const req of targetRequests) {
+        for (let i = 0; i < targetRequests.length; i++) {
+            const req = targetRequests[i];
             const newRec = req.payload;
             const candidates = recordsByFsn.get(newRec.fsn) || [];
             
@@ -450,13 +453,23 @@ class DBService {
             });
 
             recordsToAdd.push(newRec);
+            
+            if (i % 50 === 0 && i !== 0) {
+               await new Promise(resolve => setTimeout(resolve, 0));
+            }
         }
 
         if (recordsToDelete.size > 0) {
-            await this.bulkDelete(STORE_RECORDS, Array.from(recordsToDelete));
+            // Chunk delete to avoid breaking IndexedDB transactions maximums
+            const toDeleteArray = Array.from(recordsToDelete);
+            for (let i = 0; i < toDeleteArray.length; i += 500) {
+                await this.bulkDelete(STORE_RECORDS, toDeleteArray.slice(i, i + 500));
+            }
         }
         if (recordsToAdd.length > 0) {
-            await this.bulkPut(STORE_RECORDS, recordsToAdd);
+            for (let i = 0; i < recordsToAdd.length; i += 500) {
+                await this.bulkPut(STORE_RECORDS, recordsToAdd.slice(i, i + 500));
+            }
         }
         
         await this.notifyListeners();
